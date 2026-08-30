@@ -8,7 +8,11 @@
 .venv/
 .uv/
 
-# Python compole artifacts
+# Python compile artifacts
 **/__pycache__/
 *.py[cod]
 *$py.class
+
+# 주피터 노트북 자동 저장 캐시
+.ipynb_checkpoints/
+*/.ipynb_checkpoints/
