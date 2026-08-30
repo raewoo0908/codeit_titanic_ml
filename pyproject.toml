@@ -1,0 +1,31 @@
+[project]
+name = "kaggletitanic"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "RaewooKang", email = "raewoo0908@gmail.com" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "catboost>=1.2.10",
+    "jupyter>=1.1.1",
+    "lightgbm>=4.7.0",
+    "matplotlib>=3.11.1",
+    "numpy>=2.4.6",
+    "pandas>=3.0.5",
+    "scikit-learn>=1.9.0",
+    "scipy>=1.17.1",
+    "seaborn>=0.13.2",
+    "torch>=2.13.0",
+    "torchaudio>=2.11.0",
+    "torchvision>=0.28.0",
+    "xgboost>=3.2.0",
+]
+
+[project.scripts]
+kaggletitanic = "kaggletitanic:main"
+
+[build-system]
+requires = ["uv_build>=0.12.6,<0.13.0"]
+build-backend = "uv_build"

@@ -1,3 +1,14 @@
+# Editor File
 .DS_Store
 
-.env
+# Security
+.env*
+
+# venv
+.venv/
+.uv/
+
+# Python compole artifacts
+**/__pycache__/
+*.py[cod]
+*$py.class
