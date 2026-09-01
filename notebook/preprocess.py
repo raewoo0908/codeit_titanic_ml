@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 from webcolors import names
 
-class Preprocess:
+class TitanicPreprocessor:
 
     def __init__(self):
         self.og_train_df = None
@@ -41,8 +41,8 @@ class Preprocess:
         return raw.map(lambda title: np.nan if pd.isna(title) else self.TITLE_ALIASES.get(title, "Other"))
 
     def extract_deck(self, cabin: pd.Series) -> pd.Series:
-        """객실 번호에서 덱(맨 앞 알파벳)을 뽑아 리턴합니다. Cabin이 결측이면 결측 그대로 둡니다."""
-        return cabin.str.strip().str[0]
+        """객실 번호에서 덱(맨 앞 알파벳)을 뽑아 리턴합니다. Cabin이 결측이면 Unknown으로 채웁니다."""
+        return cabin.str.strip().str[0].fillna("Unknown")
 
     def extract_side(self, cabin: pd.Series) -> pd.Series:
         """객실 번호에서 객실 방향(Port / Starboard)을 뽑아 리턴합니다.
@@ -86,9 +86,9 @@ class Preprocess:
     def choose_age(self, title, pclass) -> float:
         """Title × Pclass -> Title -> 전체 중앙값 순으로 물러나며 대치값을 리턴합니다."""
 
-        by_combo = self.og_train_df.groupby(["Title", "Pclass"])["Age"].agg(["median", "count"])
-        by_title = self.og_train_df.groupby("Title")["Age"].agg(["median", "count"])
-        overall_median = self.og_train_df["Age"].median()
+        by_combo = self.prcd_train_df.groupby(["Title", "Pclass"])["Age"].agg(["median", "count"])
+        by_title = self.prcd_train_df.groupby("Title")["Age"].agg(["median", "count"])
+        overall_median = self.prcd_train_df["Age"].median()
 
         combo_median = by_combo.loc[by_combo["count"] >= self.MIN_GROUP, "median"].to_dict()
         title_median = by_title.loc[by_title["count"] >= self.MIN_GROUP, "median"].to_dict()
@@ -111,16 +111,25 @@ class Preprocess:
         votes = known["Embarked"].value_counts()
         return votes.index[0]
 
-    def pre_process(self, original_train_location: str, original_test_location: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+    def preprocess(self, original_train_location: str, original_test_location: str) -> tuple[pd.DataFrame, pd.DataFrame]:
         """
-        결측치 대처.
+        파생변수 생성 및 결측값 전처리.
         대처 대상:
+            - Name: Title 파생. Mr / Mrs / Miss / Master / Other 다섯 범주로 묶는다.
+                - 파생 컬럼: Title
             - Age: Title × Pclass 조합의 중앙값으로 대치. 
                 - 파생컬럼: hasAge
             - Cabin: 같은 티켓 번호를 소지한 다른 손님의 Cabin으로 대치. 
                 - 파생 컬럼: hasCabin, Deck, Side 
             - Embarked: Embarked를 제외한 다른 컬럼이 같은 승객군 안에서의 최빈값으로 대치.
             - Fare: test_df 안에서 조건이 같은 승객들의 평균 또는 중앙값으로 대치 (분산·치우침을 보고 선택).
+        파생 컬럼:
+            - hasAge: Age 결측 여부 (0/1)
+            - hasCabin: Cabin 결측 여부 (0/1)
+            - Title: Name에서 뽑은 호칭
+            - Deck: Cabin에서 뽑은 덱 (맨 앞 알파벳)
+            - Side: Cabin에서 뽑은 객실 방향 (Port / Starboard / Missing / Unknown)
+            - Companion: SibSp + Parch (Fare 대치용)
         Args:
             original_train_location: 원본 train.csv 경로
             original_test_location: 원본 test.csv 경로
@@ -135,51 +144,50 @@ class Preprocess:
         self.prcd_train_df = self.og_train_df.copy()
         self.prcd_test_df = self.og_test_df.copy()
 
-        # 1. 결측 플래그는 대치 전 원본에서 만든다
+        # 1. 파생 변수, 결측 플래그 생성
         for prcd, origin in ((self.prcd_train_df, self.og_train_df), (self.prcd_test_df, self.og_test_df)):
             prcd["hasAge"] = origin["Age"].notna().astype(int)
             prcd["hasCabin"] = origin["Cabin"].notna().astype(int)
+            prcd["Title"] = self.extract_title(origin["Name"])
+            prcd["Deck"] = self.extract_deck(origin["Cabin"])
+            prcd["Side"] = self.extract_side(origin["Cabin"])
+            prcd["Companion"] = origin["SibSp"] + origin["Parch"]
 
         # 2. Age 대치 + Cabin 파생
         for prcd, origin in ((self.prcd_train_df, self.og_train_df), (self.prcd_test_df, self.og_test_df)):
-            chosen = origin.apply(lambda row: self.choose_age(row["Title"], row["Pclass"]), axis=1, result_type="expand")
-            prcd["Age"] = origin["Age"].fillna(chosen[0])
-
-            # Cabin은 대치하지 않는다 (결측 77%, 같은 티켓 복원 0.9%). 관측분만 덱으로 바꾸고 나머지는 Unknown.
-            # T덱은 train에 1명뿐이므로 인코딩 단계에서 희소 범주로 묶는다.
-            prcd["Deck"] = self.extract_deck(origin["Cabin"]).fillna("Unknown")
+            chosen = prcd.apply(lambda row: self.choose_age(row["Title"], row["Pclass"]), axis=1)
+            prcd["Age"] = origin["Age"].fillna(chosen)
 
         # 3. Embarked (train 2건): 다른 컬럼이 같은 승객군의 최빈값으로 채운다.
         #    조건을 좁힐수록 그 승객과 닮은 표본만 남지만 표가 줄어 최빈값이 흔들리므로,
         #    표본이 MIN_VOTES 이상인 가장 구체적인 조합까지만 내려간다.
         for prcd, origin in ((self.prcd_train_df, self.og_train_df), (self.prcd_test_df, self.og_test_df)):
-            for idx, row in origin[origin["Embarked"].isna()].iterrows():
-                value = self.choose_embarked(row, origin)
+            missing_idx = origin[origin["Embarked"].isna()].index
+            for idx in missing_idx:
+                row = prcd.loc[idx]
+                value = self.choose_embarked(row, prcd) 
                 prcd.loc[idx, "Embarked"] = value
+
 
         # 4. Fare (test 1건): test_df 안에서 조건이 같은 승객들의 값으로 채운다.
         #    Fare는 티켓 1장의 총액이라 동반 인원 수에 따라 몇 배로 뛴다. 그래서 동반자 수까지 맞춘다.
         for prcd, origin in ((self.prcd_train_df, self.og_train_df), (self.prcd_test_df, self.og_test_df)):
-            missing_fare = origin[origin["Fare"].isna()]
-            if missing_fare.empty:
+            missing_idx = origin[origin["Fare"].isna()].index
+            if missing_idx.empty:
                 continue
 
-            # 대치값의 근거는 그 데이터셋 안에서만 찾는다 (test의 결측은 test 승객들로 채운다)
-            pool = origin.assign(Companion=origin["SibSp"] + origin["Parch"])
+            pool = prcd
 
-            for idx, row in missing_fare.iterrows():
-                target = {**row.to_dict(), "Companion": row["SibSp"] + row["Parch"]}
+            for idx in missing_idx:
+                target = pool.loc[idx] 
 
-                # 조건을 넓혀 가며 표본이 충분한 첫 그룹을 쓴다 (표본이 적으면 평균도 중앙값도 흔들린다)
                 for keys in self.FARE_KEYS:
                     values = pool[np.logical_and.reduce([pool[key].eq(target[key]) for key in keys])]["Fare"].dropna()
                     if len(values) >= self.MIN_FARE_SAMPLES:
                         break
 
                 mean, median = values.mean(), values.median()
-                # 평균과 중앙값이 벌어져 있으면 소수의 비싼 티켓이 평균을 끌어올린 것이므로 중앙값을 쓴다
                 skewed = abs(mean - median) / median > self.SKEW_TOLERANCE
                 prcd.loc[idx, "Fare"] = median if skewed else mean
-
-        
-
+                
+        return self.prcd_train_df, self.prcd_test_df
