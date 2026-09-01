@@ -152,6 +152,9 @@ class TitanicPreprocessor:
             prcd["Deck"] = self.extract_deck(origin["Cabin"])
             prcd["Side"] = self.extract_side(origin["Cabin"])
             prcd["Companion"] = origin["SibSp"] + origin["Parch"]
+            prcd["isAlone"] = (prcd["Companion"] == 0).astype(int)
+            prcd["hasSibSp"] = (origin["SibSp"] > 0).astype(int)
+            prcd["hasParch"] = (origin["Parch"] > 0).astype(int)
 
         # 2. Age 대치 + Cabin 파생
         for prcd, origin in ((self.prcd_train_df, self.og_train_df), (self.prcd_test_df, self.og_test_df)):
